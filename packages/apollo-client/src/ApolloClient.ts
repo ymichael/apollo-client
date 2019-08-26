@@ -53,6 +53,10 @@ export type ApolloClientOptions<TCacheShape> = {
   fragmentMatcher?: FragmentMatcher;
   name?: string;
   version?: string;
+  useClientDirectives?: boolean;
+  useLiveDirectives?: boolean;
+  useForceResolvers?: boolean;
+  stripConnectionDirectives?: boolean;
 };
 
 /**
@@ -125,6 +129,10 @@ export default class ApolloClient<TCacheShape> implements DataProxy {
       fragmentMatcher,
       name: clientAwarenessName,
       version: clientAwarenessVersion,
+      useClientDirectives = true,
+      useLiveDirectives = true,
+      useForceResolvers = true,
+      stripConnectionDirectives = true,
     } = options;
 
     let { link } = options;
@@ -231,6 +239,10 @@ export default class ApolloClient<TCacheShape> implements DataProxy {
       },
       localState: this.localState,
       assumeImmutableResults,
+      useClientDirectives,
+      useLiveDirectives,
+      stripConnectionDirectives,
+      useForceResolvers,
       onBroadcast: () => {
         if (this.devToolsHookCb) {
           this.devToolsHookCb({

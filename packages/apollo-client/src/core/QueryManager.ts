@@ -65,6 +65,10 @@ export class QueryManager<TStore> {
   private queryDeduplication: boolean;
   private clientAwareness: Record<string, string> = {};
   private localState: LocalState<TStore>;
+  private useClientDirectives: boolean;
+  private useLiveDirectives: boolean;
+  private useForceResolvers: boolean;
+  private stripConnectionDirectives: boolean;
 
   private onBroadcast: () => void;
 
@@ -93,6 +97,10 @@ export class QueryManager<TStore> {
     clientAwareness = {},
     localState,
     assumeImmutableResults,
+    useClientDirectives = true,
+    useLiveDirectives = true,
+    useForceResolvers = true,
+    stripConnectionDirectives = true,
   }: {
     link: ApolloLink;
     queryDeduplication?: boolean;
@@ -102,10 +110,18 @@ export class QueryManager<TStore> {
     clientAwareness?: Record<string, string>;
     localState?: LocalState<TStore>;
     assumeImmutableResults?: boolean;
+    useClientDirectives?: boolean;
+    useLiveDirectives?: boolean;
+    useForceResolvers?: boolean;
+    stripConnectionDirectives?: boolean;
   }) {
     this.link = link;
     this.queryDeduplication = queryDeduplication;
     this.dataStore = store;
+    this.useClientDirectives = useClientDirectives;
+    this.useLiveDirectives = useLiveDirectives;
+    this.useForceResolvers = useForceResolvers;
+    this.stripConnectionDirectives = stripConnectionDirectives;
     this.onBroadcast = onBroadcast;
     this.clientAwareness = clientAwareness;
     this.localState = localState || new LocalState({ cache: store.getCache() });
@@ -381,8 +397,10 @@ export class QueryManager<TStore> {
     let shouldFetch =
       needToFetch && fetchPolicy !== 'cache-only' && fetchPolicy !== 'standby';
 
-    // we need to check to see if this is an operation that uses the @live directive
-    if (hasDirectives(['live'], query)) shouldFetch = true;
+    // We need to check to see if this is an operation that uses the @live directive
+    if (!shouldFetch && this.useLiveDirectives) {
+      if (hasDirectives(['live'], query)) shouldFetch = true;
+    }
 
     const requestId = this.idCounter++;
 
@@ -667,22 +685,31 @@ export class QueryManager<TStore> {
     if (!transformCache.has(document)) {
       const cache = this.dataStore.getCache();
       const transformed = cache.transformDocument(document);
-      const forLink = removeConnectionDirectiveFromDocument(
-        cache.transformForLink(transformed));
+      const transformedForLink = cache.transformForLink(transformed);
+      const forLink = this.stripConnectionDirectives
+        ? removeConnectionDirectiveFromDocument(transformedForLink)
+        : transformedForLink;
 
-      const clientQuery = this.localState.clientQuery(transformed);
-      const serverQuery = this.localState.serverQuery(forLink);
+      const clientQuery = this.useClientDirectives
+        ? this.localState.clientQuery(transformed)
+        : null;
+      const serverQuery = this.useClientDirectives
+        ? this.localState.serverQuery(forLink)
+        : forLink;
 
       const cacheEntry = {
         document: transformed,
         // TODO These two calls (hasClientExports and shouldForceResolvers)
         // could probably be merged into a single traversal.
-        hasClientExports: hasClientExports(transformed),
-        hasForcedResolvers: this.localState.shouldForceResolvers(transformed),
+        hasClientExports:
+          this.useClientDirectives && hasClientExports(transformed),
+        hasForcedResolvers:
+          this.useForceResolvers &&
+          this.localState.shouldForceResolvers(transformed),
         clientQuery,
         serverQuery,
         defaultVars: getDefaultValues(
-          getOperationDefinition(transformed)
+          getOperationDefinition(transformed),
         ) as OperationVariables,
       };
 
@@ -690,7 +717,7 @@ export class QueryManager<TStore> {
         if (doc && !transformCache.has(doc)) {
           transformCache.set(doc, cacheEntry);
         }
-      }
+      };
       // Add cacheEntry to the transformCache using several different keys,
       // since any one of these documents could end up getting passed to the
       // transform method again in the future.
